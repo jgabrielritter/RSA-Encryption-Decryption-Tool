@@ -1,0 +1,204 @@
+import os
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+import argparse
+import base64
+
+class RSAHybridCipher:
+    def __init__(self, private_key_path=None, public_key_path=None):
+        """Initialize with existing keys or generate new ones"""
+        self.backend = default_backend()
+        
+        if private_key_path and os.path.exists(private_key_path):
+            # Load the private key
+            with open(private_key_path, 'rb') as key_file:
+                self.private_key = serialization.load_pem_private_key(
+                    key_file.read(),
+                    password=None,
+                    backend=self.backend
+                )
+                
+            # If public key not provided, derive it from private key
+            if not public_key_path:
+                self.public_key = self.private_key.public_key()
+            
+        elif public_key_path and os.path.exists(public_key_path):
+            # Load just the public key (for encryption only)
+            with open(public_key_path, 'rb') as key_file:
+                self.public_key = serialization.load_pem_public_key(
+                    key_file.read(),
+                    backend=self.backend
+                )
+        else:
+            # Generate new key pair
+            self.private_key = rsa.generate_private_key(
+                public_exponent=65537,
+                key_size=2048,
+                backend=self.backend
+            )
+            self.public_key = self.private_key.public_key()
+            
+            # Save the keys
+            if private_key_path:
+                with open(private_key_path, 'wb') as f:
+                    f.write(self.private_key.private_bytes(
+                        encoding=serialization.Encoding.PEM,
+                        format=serialization.PrivateFormat.PKCS8,
+                        encryption_algorithm=serialization.NoEncryption()
+                    ))
+                print(f"Private key saved to {private_key_path}")
+                
+            if public_key_path:
+                with open(public_key_path, 'wb') as f:
+                    f.write(self.public_key.public_bytes(
+                        encoding=serialization.Encoding.PEM,
+                        format=serialization.PublicFormat.SubjectPublicKeyInfo
+                    ))
+                print(f"Public key saved to {public_key_path}")
+    
+    def encrypt_file(self, input_file_path, output_file_path=None):
+        """Encrypt a file using hybrid RSA/AES encryption"""
+        if not output_file_path:
+            output_file_path = input_file_path + '.encrypted'
+        
+        # Generate a random AES key
+        aes_key = os.urandom(32)  # 256-bit key
+        
+        # Encrypt the AES key with RSA
+        encrypted_key = self.public_key.encrypt(
+            aes_key,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )
+        )
+        
+        # Generate a random IV
+        iv = os.urandom(16)
+        
+        # Create AES cipher for file encryption
+        cipher = Cipher(
+            algorithms.AES(aes_key),
+            modes.CBC(iv),
+            backend=self.backend
+        )
+        encryptor = cipher.encryptor()
+        
+        # Read and encrypt the file
+        with open(input_file_path, 'rb') as f:
+            plaintext = f.read()
+        
+        # Ensure the plaintext is a multiple of the block size
+        from cryptography.hazmat.primitives import padding as sym_padding
+        padder = sym_padding.PKCS7(128).padder()
+        padded_plaintext = padder.update(plaintext) + padder.finalize()
+        
+        ciphertext = encryptor.update(padded_plaintext) + encryptor.finalize()
+        
+        # Write encrypted key, IV, and ciphertext to output file
+        with open(output_file_path, 'wb') as f:
+            # Format: [key_size (4 bytes)][encrypted_key][iv][ciphertext]
+            key_size = len(encrypted_key).to_bytes(4, byteorder='big')
+            f.write(key_size)
+            f.write(encrypted_key)
+            f.write(iv)
+            f.write(ciphertext)
+        
+        print(f"File encrypted successfully: {output_file_path}")
+        return output_file_path
+    
+    def decrypt_file(self, input_file_path, output_file_path=None):
+        """Decrypt a file using hybrid RSA/AES encryption"""
+        if not hasattr(self, 'private_key'):
+            raise ValueError("Private key required for decryption")
+            
+        if not output_file_path:
+            output_file_path = input_file_path.replace('.encrypted', '.decrypted')
+        
+        with open(input_file_path, 'rb') as f:
+            # Read the encrypted AES key
+            key_size = int.from_bytes(f.read(4), byteorder='big')
+            encrypted_key = f.read(key_size)
+            
+            # Read the IV and ciphertext
+            iv = f.read(16)
+            ciphertext = f.read()
+        
+        # Decrypt the AES key with RSA
+        try:
+            aes_key = self.private_key.decrypt(
+                encrypted_key,
+                padding.OAEP(
+                    mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None
+                )
+            )
+        except Exception as e:
+            print(f"Key decryption failed: {e}")
+            print("This likely indicates you don't have the correct private key.")
+            return False
+        
+        # Create AES cipher for file decryption
+        cipher = Cipher(
+            algorithms.AES(aes_key),
+            modes.CBC(iv),
+            backend=self.backend
+        )
+        decryptor = cipher.decryptor()
+        
+        # Decrypt the file
+        try:
+            padded_plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+            
+            # Remove padding
+            from cryptography.hazmat.primitives import padding as sym_padding
+            unpadder = sym_padding.PKCS7(128).unpadder()
+            plaintext = unpadder.update(padded_plaintext) + unpadder.finalize()
+            
+        except Exception as e:
+            print(f"Decryption failed: {e}")
+            print("This could be due to file corruption or tampering.")
+            return False
+        
+        # Write the decrypted data
+        with open(output_file_path, 'wb') as f:
+            f.write(plaintext)
+        
+        print(f"File decrypted successfully: {output_file_path}")
+        return output_file_path
+
+def main():
+    parser = argparse.ArgumentParser(description="RSA/AES Hybrid File Encryption/Decryption Tool")
+    parser.add_argument("-e", "--encrypt", help="Encrypt the specified file", action="store_true")
+    parser.add_argument("-d", "--decrypt", help="Decrypt the specified file", action="store_true")
+    parser.add_argument("-i", "--input", help="Input file path", required=True)
+    parser.add_argument("-o", "--output", help="Output file path (optional)")
+    parser.add_argument("--public-key", help="Public key path (for encryption)")
+    parser.add_argument("--private-key", help="Private key path (for decryption)")
+    parser.add_argument("--generate-keys", help="Generate new RSA key pair", action="store_true")
+    
+    args = parser.parse_args()
+    
+    if args.generate_keys:
+        # Generate and save key pair
+        cipher = RSAHybridCipher(
+            private_key_path="private_key.pem",
+            public_key_path="public_key.pem"
+        )
+    elif args.encrypt:
+        # Load public key and encrypt
+        cipher = RSAHybridCipher(public_key_path=args.public_key)
+        cipher.encrypt_file(args.input, args.output)
+    elif args.decrypt:
+        # Load private key and decrypt
+        cipher = RSAHybridCipher(private_key_path=args.private_key)
+        cipher.decrypt_file(args.input, args.output)
+    else:
+        parser.print_help()
+
+if __name__ == "__main__":
+    main()
