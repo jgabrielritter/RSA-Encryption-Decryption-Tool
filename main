@@ -1,9 +1,10 @@
 import os
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
-import argparse
 import base64
 
 class RSAHybridCipher:
@@ -48,7 +49,6 @@ class RSAHybridCipher:
                         format=serialization.PrivateFormat.PKCS8,
                         encryption_algorithm=serialization.NoEncryption()
                     ))
-                print(f"Private key saved to {private_key_path}")
                 
             if public_key_path:
                 with open(public_key_path, 'wb') as f:
@@ -56,7 +56,6 @@ class RSAHybridCipher:
                         encoding=serialization.Encoding.PEM,
                         format=serialization.PublicFormat.SubjectPublicKeyInfo
                     ))
-                print(f"Public key saved to {public_key_path}")
     
     def encrypt_file(self, input_file_path, output_file_path=None):
         """Encrypt a file using hybrid RSA/AES encryption"""
@@ -107,7 +106,6 @@ class RSAHybridCipher:
             f.write(iv)
             f.write(ciphertext)
         
-        print(f"File encrypted successfully: {output_file_path}")
         return output_file_path
     
     def decrypt_file(self, input_file_path, output_file_path=None):
@@ -138,9 +136,7 @@ class RSAHybridCipher:
                 )
             )
         except Exception as e:
-            print(f"Key decryption failed: {e}")
-            print("This likely indicates you don't have the correct private key.")
-            return False
+            raise ValueError("Key decryption failed. This likely indicates you don't have the correct private key.")
         
         # Create AES cipher for file decryption
         cipher = Cipher(
@@ -160,45 +156,232 @@ class RSAHybridCipher:
             plaintext = unpadder.update(padded_plaintext) + unpadder.finalize()
             
         except Exception as e:
-            print(f"Decryption failed: {e}")
-            print("This could be due to file corruption or tampering.")
-            return False
+            raise ValueError("Decryption failed. This could be due to file corruption or tampering.")
         
         # Write the decrypted data
         with open(output_file_path, 'wb') as f:
             f.write(plaintext)
         
-        print(f"File decrypted successfully: {output_file_path}")
         return output_file_path
 
-def main():
-    parser = argparse.ArgumentParser(description="RSA/AES Hybrid File Encryption/Decryption Tool")
-    parser.add_argument("-e", "--encrypt", help="Encrypt the specified file", action="store_true")
-    parser.add_argument("-d", "--decrypt", help="Decrypt the specified file", action="store_true")
-    parser.add_argument("-i", "--input", help="Input file path", required=True)
-    parser.add_argument("-o", "--output", help="Output file path (optional)")
-    parser.add_argument("--public-key", help="Public key path (for encryption)")
-    parser.add_argument("--private-key", help="Private key path (for decryption)")
-    parser.add_argument("--generate-keys", help="Generate new RSA key pair", action="store_true")
-    
-    args = parser.parse_args()
-    
-    if args.generate_keys:
-        # Generate and save key pair
-        cipher = RSAHybridCipher(
-            private_key_path="private_key.pem",
-            public_key_path="public_key.pem"
+class RSAEncryptionApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("RSA Hybrid Encryption Tool")
+        self.root.geometry("750x600")
+        self.root.configure(padx=20, pady=20)
+        
+        self.private_key_path = tk.StringVar()
+        self.public_key_path = tk.StringVar()
+        self.input_file_path = tk.StringVar()
+        self.output_file_path = tk.StringVar()
+        self.status_var = tk.StringVar()
+        self.status_var.set("Ready")
+        
+        self.create_widgets()
+        
+    def create_widgets(self):
+        # Create notebook for tabs
+        notebook = ttk.Notebook(self.root)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Create frames for each tab
+        key_frame = ttk.Frame(notebook, padding=10)
+        encrypt_frame = ttk.Frame(notebook, padding=10)
+        decrypt_frame = ttk.Frame(notebook, padding=10)
+        
+        notebook.add(key_frame, text="Key Management")
+        notebook.add(encrypt_frame, text="Encrypt")
+        notebook.add(decrypt_frame, text="Decrypt")
+        
+        # --- Key Management Tab ---
+        ttk.Label(key_frame, text="RSA Key Management", font=("Arial", 14, "bold")).grid(column=0, row=0, columnspan=3, sticky="w", pady=10)
+        
+        # Generate Keys Section
+        ttk.Label(key_frame, text="Generate New Key Pair", font=("Arial", 12)).grid(column=0, row=1, sticky="w", pady=5)
+        
+        ttk.Label(key_frame, text="Private Key Path:").grid(column=0, row=2, sticky="w", pady=2)
+        ttk.Entry(key_frame, width=50, textvariable=self.private_key_path).grid(column=0, row=3, sticky="w")
+        ttk.Button(key_frame, text="Browse...", command=self.browse_private_key_save).grid(column=1, row=3, padx=5)
+        
+        ttk.Label(key_frame, text="Public Key Path:").grid(column=0, row=4, sticky="w", pady=2)
+        ttk.Entry(key_frame, width=50, textvariable=self.public_key_path).grid(column=0, row=5, sticky="w")
+        ttk.Button(key_frame, text="Browse...", command=self.browse_public_key_save).grid(column=1, row=5, padx=5)
+        
+        ttk.Button(key_frame, text="Generate Keys", command=self.generate_keys).grid(column=0, row=6, sticky="w", pady=10)
+        
+        # --- Encrypt Tab ---
+        ttk.Label(encrypt_frame, text="Encrypt File", font=("Arial", 14, "bold")).grid(column=0, row=0, columnspan=3, sticky="w", pady=10)
+        
+        ttk.Label(encrypt_frame, text="Public Key:").grid(column=0, row=1, sticky="w", pady=2)
+        ttk.Entry(encrypt_frame, width=50, textvariable=self.public_key_path).grid(column=0, row=2, sticky="w")
+        ttk.Button(encrypt_frame, text="Browse...", command=self.browse_public_key_load).grid(column=1, row=2, padx=5)
+        
+        ttk.Label(encrypt_frame, text="Input File:").grid(column=0, row=3, sticky="w", pady=2)
+        ttk.Entry(encrypt_frame, width=50, textvariable=self.input_file_path).grid(column=0, row=4, sticky="w")
+        ttk.Button(encrypt_frame, text="Browse...", command=self.browse_input_file).grid(column=1, row=4, padx=5)
+        
+        ttk.Label(encrypt_frame, text="Output File (optional):").grid(column=0, row=5, sticky="w", pady=2)
+        ttk.Entry(encrypt_frame, width=50, textvariable=self.output_file_path).grid(column=0, row=6, sticky="w")
+        ttk.Button(encrypt_frame, text="Browse...", command=self.browse_output_file).grid(column=1, row=6, padx=5)
+        
+        ttk.Button(encrypt_frame, text="Encrypt", command=self.encrypt_file).grid(column=0, row=7, sticky="w", pady=10)
+        
+        # --- Decrypt Tab ---
+        ttk.Label(decrypt_frame, text="Decrypt File", font=("Arial", 14, "bold")).grid(column=0, row=0, columnspan=3, sticky="w", pady=10)
+        
+        ttk.Label(decrypt_frame, text="Private Key:").grid(column=0, row=1, sticky="w", pady=2)
+        private_key_entry = ttk.Entry(decrypt_frame, width=50, textvariable=self.private_key_path)
+        private_key_entry.grid(column=0, row=2, sticky="w")
+        ttk.Button(decrypt_frame, text="Browse...", command=self.browse_private_key_load).grid(column=1, row=2, padx=5)
+        
+        ttk.Label(decrypt_frame, text="Input File:").grid(column=0, row=3, sticky="w", pady=2)
+        ttk.Entry(decrypt_frame, width=50, textvariable=self.input_file_path).grid(column=0, row=4, sticky="w")
+        ttk.Button(decrypt_frame, text="Browse...", command=self.browse_input_file).grid(column=1, row=4, padx=5)
+        
+        ttk.Label(decrypt_frame, text="Output File (optional):").grid(column=0, row=5, sticky="w", pady=2)
+        ttk.Entry(decrypt_frame, width=50, textvariable=self.output_file_path).grid(column=0, row=6, sticky="w")
+        ttk.Button(decrypt_frame, text="Browse...", command=self.browse_output_file).grid(column=1, row=6, padx=5)
+        
+        ttk.Button(decrypt_frame, text="Decrypt", command=self.decrypt_file).grid(column=0, row=7, sticky="w", pady=10)
+        
+        # --- Status Bar ---
+        status_frame = ttk.Frame(self.root, relief=tk.SUNKEN, padding=5)
+        status_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        ttk.Label(status_frame, textvariable=self.status_var).pack(side=tk.LEFT)
+        
+    def browse_private_key_save(self):
+        filename = filedialog.asksaveasfilename(
+            title="Save Private Key",
+            filetypes=[("PEM Files", "*.pem"), ("All Files", "*.*")],
+            defaultextension=".pem"
         )
-    elif args.encrypt:
-        # Load public key and encrypt
-        cipher = RSAHybridCipher(public_key_path=args.public_key)
-        cipher.encrypt_file(args.input, args.output)
-    elif args.decrypt:
-        # Load private key and decrypt
-        cipher = RSAHybridCipher(private_key_path=args.private_key)
-        cipher.decrypt_file(args.input, args.output)
-    else:
-        parser.print_help()
+        if filename:
+            self.private_key_path.set(filename)
+    
+    def browse_public_key_save(self):
+        filename = filedialog.asksaveasfilename(
+            title="Save Public Key",
+            filetypes=[("PEM Files", "*.pem"), ("All Files", "*.*")],
+            defaultextension=".pem"
+        )
+        if filename:
+            self.public_key_path.set(filename)
+    
+    def browse_private_key_load(self):
+        filename = filedialog.askopenfilename(
+            title="Select Private Key",
+            filetypes=[("PEM Files", "*.pem"), ("All Files", "*.*")]
+        )
+        if filename:
+            self.private_key_path.set(filename)
+    
+    def browse_public_key_load(self):
+        filename = filedialog.askopenfilename(
+            title="Select Public Key",
+            filetypes=[("PEM Files", "*.pem"), ("All Files", "*.*")]
+        )
+        if filename:
+            self.public_key_path.set(filename)
+    
+    def browse_input_file(self):
+        filename = filedialog.askopenfilename(
+            title="Select Input File",
+            filetypes=[("All Files", "*.*")]
+        )
+        if filename:
+            self.input_file_path.set(filename)
+            
+            # Auto-suggest output filename if empty
+            if not self.output_file_path.get():
+                if ".encrypted" in filename:
+                    suggested_output = filename.replace(".encrypted", ".decrypted")
+                else:
+                    suggested_output = filename + ".encrypted"
+                self.output_file_path.set(suggested_output)
+    
+    def browse_output_file(self):
+        filename = filedialog.asksaveasfilename(
+            title="Save Output File",
+            filetypes=[("All Files", "*.*")]
+        )
+        if filename:
+            self.output_file_path.set(filename)
+    
+    def generate_keys(self):
+        try:
+            self.status_var.set("Generating keys...")
+            self.root.update_idletasks()
+            
+            private_key_path = self.private_key_path.get()
+            public_key_path = self.public_key_path.get()
+            
+            if not private_key_path or not public_key_path:
+                messagebox.showerror("Error", "Please specify both private and public key paths.")
+                self.status_var.set("Ready")
+                return
+            
+            cipher = RSAHybridCipher(
+                private_key_path=private_key_path,
+                public_key_path=public_key_path
+            )
+            
+            messagebox.showinfo("Success", f"Keys generated successfully!\nPrivate key: {private_key_path}\nPublic key: {public_key_path}")
+            self.status_var.set("Keys generated successfully.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate keys: {str(e)}")
+            self.status_var.set("Key generation failed.")
+    
+    def encrypt_file(self):
+        try:
+            self.status_var.set("Encrypting file...")
+            self.root.update_idletasks()
+            
+            public_key_path = self.public_key_path.get()
+            input_file_path = self.input_file_path.get()
+            output_file_path = self.output_file_path.get() or (input_file_path + ".encrypted")
+            
+            if not public_key_path or not input_file_path:
+                messagebox.showerror("Error", "Please specify both public key and input file.")
+                self.status_var.set("Ready")
+                return
+            
+            cipher = RSAHybridCipher(public_key_path=public_key_path)
+            output_path = cipher.encrypt_file(input_file_path, output_file_path)
+            
+            messagebox.showinfo("Success", f"File encrypted successfully!\nOutput: {output_path}")
+            self.status_var.set("File encrypted successfully.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Encryption failed: {str(e)}")
+            self.status_var.set("Encryption failed.")
+    
+    def decrypt_file(self):
+        try:
+            self.status_var.set("Decrypting file...")
+            self.root.update_idletasks()
+            
+            private_key_path = self.private_key_path.get()
+            input_file_path = self.input_file_path.get()
+            output_file_path = self.output_file_path.get() or input_file_path.replace(".encrypted", ".decrypted")
+            
+            if not private_key_path or not input_file_path:
+                messagebox.showerror("Error", "Please specify both private key and input file.")
+                self.status_var.set("Ready")
+                return
+            
+            cipher = RSAHybridCipher(private_key_path=private_key_path)
+            output_path = cipher.decrypt_file(input_file_path, output_file_path)
+            
+            messagebox.showinfo("Success", f"File decrypted successfully!\nOutput: {output_path}")
+            self.status_var.set("File decrypted successfully.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Decryption failed: {str(e)}")
+            self.status_var.set("Decryption failed.")
+
+def main():
+    root = tk.Tk()
+    app = RSAEncryptionApp(root)
+    root.mainloop()
 
 if __name__ == "__main__":
     main()
